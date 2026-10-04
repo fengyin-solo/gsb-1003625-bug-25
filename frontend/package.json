@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test:chain": "esbuild scripts/chain-test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/chain-test.mjs && node node_modules/.cache/chain-test.mjs"
   },
   "dependencies": {
     "pinia": "^2.1.7",

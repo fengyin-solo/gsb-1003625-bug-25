@@ -794,4 +794,6 @@ export const SEED_ROWS: Record<string, EntryRow[]> = {
       "记录状态": "林木生长样例3"
     }
   ],
+  // 处置提醒：撤回扑火队伍时补建，挂在值班面板上核对。历史数据没有这个 key 时按空表兼容。
+  "reminder": []
 }

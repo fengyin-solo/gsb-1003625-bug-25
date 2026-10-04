@@ -85,13 +85,17 @@ const meta = moduleMeta('equipment')
 const columns = ["装备编号", "装备名称", "装备类型", "规格型号", "保管林场", "购入日期", "最近检修日", "装备状态"]
 const actions = ["领用装备", "送检登记", "报废装备"]
 const statuses = ["可用", "已领用", "待检修", "已报废"]
-const stats = [{"label": "装备总数", "value": 0}, {"label": "可用装备", "value": 0}, {"label": "待检修数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const stats = computed(() => [
+  { label: '装备总数', value: rows.value.length },
+  { label: '可用装备', value: rows.value.filter((row) => String(row.status) === '可用').length },
+  { label: '待检修数', value: rows.value.filter((row) => String(row.status) === '待检修').length },
+])
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,

@@ -47,7 +47,7 @@
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in rowActions(row)"
               :key="action"
               class="link"
               type="button"
@@ -55,6 +55,7 @@
             >
               {{ action }}
             </button>
+            <span v-if="!rowActions(row).length">—</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -73,31 +74,43 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+import { downloadEntries, listEntries, moduleMeta } from '@/api/local-service'
+import { runTeamAction } from '@/api/team-chain'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('fireteam')
-const columns = ["队伍编号", "队伍名称", "所属林场", "队长姓名", "队员人数", "集结半径", "值班状态", "出动状态"]
-const actions = ["下达出动", "转入休整", "撤回队伍"]
+const columns = ["队伍编号", "队伍名称", "所属林场", "队长姓名", "队员人数", "集结半径", "值班状态", "出动状态", "出动时间"]
 const statuses = ["在营待命", "已出动", "扑救中", "已撤回", "休整中"]
-const stats = [{"label": "队伍总数", "value": 0}, {"label": "待命队伍", "value": 0}, {"label": "出动队伍", "value": 0}]
+
+// 状态只能单向推进：每个状态允许的动作写死在这里，列表只给出当前能走的下一步。
+const ROW_ACTIONS: Record<string, string[]> = {
+  在营待命: ['下达出动'],
+  已出动: ['撤回队伍'],
+  扑救中: ['撤回队伍'],
+  已撤回: ['转入休整'],
+  休整中: [],
+}
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const stats = computed(() => [
+  { label: '队伍总数', value: rows.value.length },
+  { label: '待命队伍', value: rows.value.filter((row) => String(row.status) === '在营待命').length },
+  { label: '出动队伍', value: rows.value.filter((row) => ['已出动', '扑救中'].includes(String(row.status))).length },
+])
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function rowActions(row: EntryRow): string[] {
+  return ROW_ACTIONS[String(row.status)] ?? []
+}
 
 function resetFilters() {
   filters.value = {}
@@ -114,7 +127,7 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  const result = runTeamAction(Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
