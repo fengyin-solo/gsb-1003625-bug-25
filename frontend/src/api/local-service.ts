@@ -1,9 +1,23 @@
+import {
+  TEAM_CHAIN_ACTIONS,
+  listReminders,
+  normalizeEquipmentRow,
+  normalizeTeamRow,
+  reconcileChain,
+  runTeamAction,
+} from '@/api/dispatch-chain'
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
+
+// 装备台账与队伍出动共用一条单向链：可用 → 已领用 → 待检修 → 已报废，只允许往前走。
+// （归还装备不走通用动作，由撤回队伍的联动链按批次写回「可用」。）
+const ONE_WAY_FLOWS: Record<string, string[]> = {
+  equipment: ['可用', '已领用', '待检修', '已报废'],
+}
 
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
@@ -24,12 +38,24 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
 }
 
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
-  const matched = filterRows(listRows(key), filters)
+  let rows = listRows(key)
+  // 队伍与装备的展示字段按权威状态推导，历史记录里的旧值不会在列表上造成矛盾。
+  if (key === 'fireteam') {
+    rows = rows.map(normalizeTeamRow)
+  }
+  if (key === 'equipment') {
+    rows = rows.map(normalizeEquipmentRow)
+  }
+  const matched = filterRows(rows, filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
+  // 扑火队伍的出动/撤回/休整走联动回写链：队伍、装备、处置提醒同次落库。
+  if (key === 'fireteam' && TEAM_CHAIN_ACTIONS.includes(action)) {
+    return runTeamAction(id, action)
+  }
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
@@ -43,10 +69,24 @@ export function runAction(key: string, id: number, action: string): ActionResult
   if (current === target) {
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
   }
+  const oneWay = ONE_WAY_FLOWS[key]
+  if (oneWay) {
+    const from = oneWay.indexOf(current)
+    const to = oneWay.indexOf(target)
+    if (from >= 0 && to >= 0 && to < from) {
+      return {
+        ok: false,
+        message: `${meta.entity}当前状态「${current}」，状态只能单向推进（${oneWay.join(' → ')}），不能执行「${action}」`,
+      }
+    }
+  }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
+  // 回写业务状态字段（每个模块最后一个字段）：列表展示列与当前状态不再互相矛盾。
+  const statusField = meta.fields[meta.fields.length - 1]
   const updated: EntryRow = {
     ...rows[index],
     status: target,
+    [statusField]: target,
     pending: target !== lastStatus,
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
   }
@@ -55,6 +95,14 @@ export function runAction(key: string, id: number, action: string): ActionResult
   saveRows(key, next)
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
 }
+
+// 处置提醒：随队伍出动生成、随撤回闭环，这里只读；核对入口幂等，可反复点。
+export function listDispatchReminders(): EntryRow[] {
+  return listReminders()
+}
+
+export { reconcileChain as reconcileDispatch }
+export type { ReconcileResult } from '@/api/dispatch-chain'
 
 export function resetModule(key: string): PageResult {
   resetRows(key)

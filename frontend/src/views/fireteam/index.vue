@@ -63,8 +63,54 @@
       </tbody>
     </table>
 
+    <section class="reminder-panel">
+      <header class="reminder-head">
+        <h3>处置提醒</h3>
+        <p class="page-desc">
+          下达出动后值班状态进入火场处置并生成提醒，同一队伍同时只有一条待处置提醒；撤回队伍时提醒同次闭环。
+        </p>
+        <button class="btn" type="button" @click="recheck">核对提醒</button>
+      </header>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>提醒编号</th>
+            <th>队伍编号</th>
+            <th>队伍名称</th>
+            <th>所属林场</th>
+            <th>出动批次</th>
+            <th>出动时间</th>
+            <th>提醒状态</th>
+            <th>处置时间</th>
+            <th>来源</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="reminder in reminders"
+            :key="String(reminder.id)"
+            :class="{ 'reminder-open': reminder.status === '待处置' }"
+          >
+            <td>{{ reminder['提醒编号'] ?? '—' }}</td>
+            <td>{{ reminder['队伍编号'] ?? '—' }}</td>
+            <td>{{ reminder['队伍名称'] ?? '—' }}</td>
+            <td>{{ reminder['所属林场'] ?? '—' }}</td>
+            <td>{{ reminder['出动批次'] ?? '—' }}</td>
+            <td>{{ reminder['出动时间'] || '—' }}</td>
+            <td>{{ reminder.status }}</td>
+            <td>{{ reminder['处置时间'] || '—' }}</td>
+            <td>{{ reminder['创建来源'] ?? '—' }}</td>
+          </tr>
+          <tr v-if="!reminders.length">
+            <td colspan="9" class="empty-state">暂无处置提醒，下达出动后自动生成</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条扑火队伍记录</span>
+      <span v-if="noticeMessage" class="notice-text">{{ noticeMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -75,8 +121,10 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  listDispatchReminders,
   listEntries,
   moduleMeta,
+  reconcileDispatch,
   runAction as applyAction,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
@@ -88,8 +136,10 @@ const statuses = ["在营待命", "已出动", "扑救中", "已撤回", "休整
 const stats = [{"label": "队伍总数", "value": 0}, {"label": "待命队伍", "value": 0}, {"label": "出动队伍", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
+const reminders = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const noticeMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -114,11 +164,22 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
+  noticeMessage.value = ''
   const result = applyAction(meta.key, Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  noticeMessage.value = result.message
+  // 撤回/出动后回到面板再核对一遍提醒，保证队伍、装备、提醒三者一致。
+  reconcileDispatch()
+  reload()
+}
+
+function recheck() {
+  errorMessage.value = ''
+  const result = reconcileDispatch()
+  noticeMessage.value = result.message
   reload()
 }
 
@@ -128,10 +189,18 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    reminders.value = listDispatchReminders()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '扑火队伍列表读取失败'
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  // 进入值班面板先核对一次：历史出动中的队伍补建提醒，已撤回的闭环残留提醒。
+  const result = reconcileDispatch()
+  if (result.ok && result.changed) {
+    noticeMessage.value = result.message
+  }
+  reload()
+})
 </script>
